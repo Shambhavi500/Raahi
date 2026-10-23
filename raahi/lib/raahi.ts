@@ -1,0 +1,478 @@
+import type { SQLInputValue } from "node:sqlite";
+import { db, dropAll } from "./db";
+import {
+  DAY_LABELS,
+  placeName,
+  quote,
+  rupees,
+  type Category,
+  type Driver,
+  type Duration,
+  type EventKind,
+  type Passenger,
+  type Plan,
+  type State,
+  type Trip,
+  type TripStatus,
+} from "./shared";
+
+// ---------- tiny query helpers ----------
+
+const g = globalThis as unknown as { __raahiSeeded?: boolean };
+
+function conn() {
+  const d = db();
+  if (!g.__raahiSeeded) {
+    g.__raahiSeeded = true;
+    const { n } = d.prepare("SELECT COUNT(*) AS n FROM drivers").get() as { n: number };
+    if (n === 0) seed();
+  }
+  return d;
+}
+
+function one<T>(sql: string, ...p: SQLInputValue[]): T | undefined {
+  return conn().prepare(sql).get(...p) as unknown as T | undefined;
+}
+function many<T>(sql: string, ...p: SQLInputValue[]): T[] {
+  return conn().prepare(sql).all(...p) as unknown as T[];
+}
+function run(sql: string, ...p: SQLInputValue[]) {
+  return conn().prepare(sql).run(...p);
+}
+
+class UserError extends Error {}
+const fail = (msg: string): never => {
+  throw new UserError(msg);
+};
+
+function getTrip(id: number) {
+  return one<Trip>("SELECT * FROM trips WHERE id = ?", id) ?? fail("Trip not found");
+}
+function getPlan(id: number) {
+  return one<Plan>("SELECT * FROM plans WHERE id = ?", id) ?? fail("Plan not found");
+}
+function getDriver(id: number) {
+  return one<Driver>("SELECT * FROM drivers WHERE id = ?", id) ?? fail("Driver not found");
+}
+function getPassenger(id: number) {
+  return one<Passenger>("SELECT * FROM passengers WHERE id = ?", id) ?? fail("Passenger not found");
+}
+
+// Audience keys: "operator", "passenger:<id>", "driver:<id>".
+function log(
+  audience: string[],
+  kind: EventKind,
+  title: string,
+  detail = "",
+  ids: { tripId?: number; planId?: number } = {},
+) {
+  run(
+    "INSERT INTO events (ts, audience, kind, title, detail, trip_id, plan_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    new Date().toISOString(),
+    `,${audience.join(",")},`,
+    kind,
+    title,
+    detail,
+    ids.tripId ?? null,
+    ids.planId ?? null,
+  );
+}
+
+const pad = (n: number) => String(n).padStart(2, "0");
+const localDate = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+const minutes = (hhmm: string) => {
+  const [h, m] = hhmm.split(":").map(Number);
+  return h * 60 + m;
+};
+const tripLabel = (t: Trip) =>
+  `${DAY_LABELS[new Date(t.date + "T00:00").getDay()]} ${t.time} · ${placeName(t.from_place)} → ${placeName(t.to_place)}`;
+const firstName = (name: string) => name.split(" ")[0];
+const unavailableIds = (t: Trip) => t.unavailable_ids.split(",").filter(Boolean).map(Number);
+
+const CLOSED_STATUSES = "('CANCELLED_REFUNDED')";
+
+// ---------- dispatch core ----------
+
+// Returns why a driver can't take this trip, or null if they're eligible.
+// A driver failing any rule is excluded, never ranked lower.
+function exclusionReason(driver: Driver, trip: Trip): string | null {
+  if (unavailableIds(trip).includes(driver.id)) return "reported unavailable for this trip";
+  if (!driver.on_duty) return "off duty";
+  if (trip.category === "WOMEN_ONLY" && !driver.women_only_eligible) return "not Women-Only eligible";
+  const sameDay = many<{ time: string }>(
+    `SELECT time FROM trips WHERE driver_id = ? AND date = ? AND id <> ? AND status NOT IN ${CLOSED_STATUSES}`,
+    driver.id,
+    trip.date,
+    trip.id,
+  );
+  if (sameDay.some((r) => Math.abs(minutes(r.time) - minutes(trip.time)) < 60)) {
+    return "already booked at this time";
+  }
+  return null;
+}
+
+function dispatch(tripId: number, preferredId: number | null) {
+  const trip = getTrip(tripId);
+  const load = (d: Driver) =>
+    one<{ n: number }>("SELECT COUNT(*) AS n FROM trips WHERE driver_id = ? AND date = ?", d.id, trip.date)!.n;
+  const drivers = many<Driver>("SELECT * FROM drivers").sort((a, b) => {
+    if (a.id === preferredId) return -1;
+    if (b.id === preferredId) return 1;
+    return load(a) - load(b);
+  });
+
+  // Check every driver so the audit log shows exactly who was excluded and why.
+  const checked = drivers.map((d) => ({ d, reason: exclusionReason(d, trip) }));
+  const skipped = checked.filter((c) => c.reason).map((c) => `${c.d.name} (${c.reason})`);
+  for (const { d } of checked.filter((c) => !c.reason)) {
+    try {
+      // The UNIQUE(driver_id, date, time) constraint is the last guard against double-booking.
+      const res = run(
+        "UPDATE trips SET driver_id = ?, status = 'CONFIRMED' WHERE id = ? AND driver_id IS NULL",
+        d.id,
+        trip.id,
+      );
+      if (res.changes === 1) return { driver: d, skipped };
+    } catch {
+      skipped.push(`${d.name} (double-booking blocked)`);
+    }
+  }
+  run("UPDATE trips SET status = 'NO_ELIGIBLE_DRIVER' WHERE id = ?", trip.id);
+  return { driver: null, skipped };
+}
+
+// Run a step a moment later (used for the visible "searching" state). Never let it crash the server.
+function later(fn: () => void, ms: number) {
+  setTimeout(() => {
+    try {
+      fn();
+    } catch (e) {
+      console.error(e);
+    }
+  }, ms);
+}
+
+function passengerOf(trip: Trip) {
+  return getPassenger(getPlan(trip.plan_id).passenger_id);
+}
+
+function runReplacement(tripId: number) {
+  const trip = getTrip(tripId);
+  if (!["REPLACEMENT_SEARCHING", "NO_ELIGIBLE_DRIVER", "ASSIGNMENT_PENDING"].includes(trip.status)) return;
+  const p = passengerOf(trip);
+  const { driver, skipped } = dispatch(tripId, null);
+  const checked = skipped.length ? `Skipped: ${skipped.join(", ")}.` : "All drivers were eligible.";
+
+  if (driver) {
+    const womenNote =
+      trip.category === "WOMEN_ONLY" ? " Your booking is still Women-Only, with a verified woman driver." : "";
+    log([`passenger:${p.id}`], "success", `Replacement driver confirmed: ${driver.name}`,
+      `${driver.vehicle} · ${driver.plate} for ${tripLabel(trip)}.${womenNote}`, { tripId });
+    log(["operator"], "success", `Trip #${tripId} covered by ${driver.name}`, checked, { tripId });
+    log([`driver:${driver.id}`], "info", "New trip assigned to you",
+      `${tripLabel(trip)} · Passenger: ${firstName(p.name)}`, { tripId });
+  } else {
+    const category = trip.category === "WOMEN_ONLY" ? "Women-Only " : "";
+    log([`passenger:${p.id}`], "danger", `We couldn't find an eligible ${category}driver yet`,
+      trip.category === "WOMEN_ONLY"
+        ? "Your booking stays Women-Only. You can keep waiting, cancel with a refund, or switch this one trip to Standard yourself."
+        : "You can keep waiting or cancel this trip with a refund.",
+      { tripId });
+    log(["operator"], "danger", `No eligible driver for trip #${tripId}`, `${checked} Needs dispatcher attention.`, { tripId });
+  }
+}
+
+// ---------- actions ----------
+
+function createPlan(a: {
+  passengerId: number;
+  pickup: string;
+  dropoff: string;
+  days: number[];
+  pickupTime: string;
+  returnTime?: string | null;
+  category: Category;
+  duration: Duration;
+}) {
+  const p = getPassenger(a.passengerId);
+  if (a.pickup === a.dropoff) fail("Pickup and drop-off can't be the same place.");
+  if (!a.days?.length) fail("Pick at least one travel day.");
+  if (!/^\d{2}:\d{2}$/.test(a.pickupTime)) fail("Pick a valid pickup time.");
+  if (a.category === "WOMEN_ONLY" && !p.women_verified) {
+    fail("Women-Only plans need a verified woman passenger account.");
+  }
+  const q = quote({ pickup: a.pickup, dropoff: a.dropoff, days: a.days, hasReturn: !!a.returnTime, duration: a.duration });
+  const res = run(
+    `INSERT INTO plans (passenger_id, pickup, dropoff, days, pickup_time, return_time, category, duration, monthly_price, status, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING_OPERATOR_CONFIRMATION', ?)`,
+    p.id, a.pickup, a.dropoff, [...a.days].sort().join(","), a.pickupTime, a.returnTime || null,
+    a.category, a.duration, q.monthly, new Date().toISOString(),
+  );
+  const planId = Number(res.lastInsertRowid);
+  const label = a.category === "WOMEN_ONLY" ? "Women-Only" : "Standard";
+  log([`passenger:${p.id}`], "info", "Plan requested. Waiting for operator confirmation",
+    `${placeName(a.pickup)} → ${placeName(a.dropoff)} · ${label} · ${rupees(q.monthly)}/month. You won't be charged until the operator accepts.`,
+    { planId });
+  log(["operator"], "warning", `New ${label} plan request from ${p.name}`,
+    `${placeName(a.pickup)} → ${placeName(a.dropoff)} · ${a.days.map((d) => DAY_LABELS[d]).join(", ")} at ${a.pickupTime}`,
+    { planId });
+}
+
+function operatorDecision(a: { planId: number; decision: "approve" | "reject"; primaryDriverId?: number }) {
+  const plan = getPlan(a.planId);
+  if (plan.status !== "PENDING_OPERATOR_CONFIRMATION") fail("This plan isn't waiting for a decision.");
+  const p = getPassenger(plan.passenger_id);
+
+  if (a.decision === "reject") {
+    run("UPDATE plans SET status = 'REJECTED' WHERE id = ?", plan.id);
+    log([`passenger:${p.id}`], "danger", "The operator couldn't take this plan",
+      "No recurring capacity on this route right now. You have not been charged.", { planId: plan.id });
+    log(["operator"], "info", `Plan #${plan.id} rejected`, "", { planId: plan.id });
+    return;
+  }
+
+  const d = getDriver(a.primaryDriverId ?? fail("Choose a primary driver."));
+  if (!d.on_duty) fail(`${d.name} is off duty.`);
+  if (plan.category === "WOMEN_ONLY" && !d.women_only_eligible) {
+    fail(`${d.name} is not Women-Only eligible. Women-Only plans need an eligible driver.`);
+  }
+  run("UPDATE plans SET status = 'PENDING_PAYMENT', primary_driver_id = ? WHERE id = ?", d.id, plan.id);
+  log([`passenger:${p.id}`], "success", "Operator accepted your plan",
+    `Primary driver: ${d.name} (${d.vehicle}). If ${firstName(d.name)} can't come, an eligible backup is assigned. Pay to activate.`,
+    { planId: plan.id });
+  log(["operator"], "success", `Plan #${plan.id} accepted · primary ${d.name}`, "", { planId: plan.id });
+}
+
+function payPlan(a: { planId: number; passengerId: number }) {
+  const plan = getPlan(a.planId);
+  if (plan.passenger_id !== a.passengerId) fail("Not your plan.");
+  if (plan.status !== "PENDING_PAYMENT") fail("This plan isn't ready for payment.");
+  run("UPDATE plans SET status = 'ACTIVE' WHERE id = ?", plan.id);
+  const created = generateTrips(plan);
+  const unassigned = created.filter((id) => getTrip(id).status !== "CONFIRMED").length;
+  log([`passenger:${plan.passenger_id}`], "success", "Payment received (demo). Your plan is active",
+    `${created.length} trips scheduled for the next 7 days.` +
+      (unassigned ? ` ${unassigned} still need a driver; we'll update you.` : " All trips have a confirmed driver."),
+    { planId: plan.id });
+  log(["operator"], "info", `Plan #${plan.id} active · ${created.length} trips generated`, "", { planId: plan.id });
+}
+
+function generateTrips(plan: Plan): number[] {
+  const days = plan.days.split(",").map(Number);
+  const q = quote({ pickup: plan.pickup, dropoff: plan.dropoff, days, hasReturn: !!plan.return_time, duration: plan.duration });
+  const legs: { time: string; direction: Trip["direction"]; from: string; to: string }[] = [
+    { time: plan.pickup_time, direction: "OUTBOUND", from: plan.pickup, to: plan.dropoff },
+  ];
+  if (plan.return_time) legs.push({ time: plan.return_time, direction: "RETURN", from: plan.dropoff, to: plan.pickup });
+
+  const ids: number[] = [];
+  for (let i = 0; i < 7; i++) {
+    const date = new Date();
+    date.setDate(date.getDate() + i);
+    if (!days.includes(date.getDay())) continue;
+    for (const leg of legs) {
+      const res = run(
+        `INSERT INTO trips (plan_id, date, time, direction, from_place, to_place, category, fare, status)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'ASSIGNMENT_PENDING')`,
+        plan.id, localDate(date), leg.time, leg.direction, leg.from, leg.to, plan.category, q.perTrip,
+      );
+      const id = Number(res.lastInsertRowid);
+      ids.push(id);
+      dispatch(id, plan.primary_driver_id);
+    }
+  }
+  return ids;
+}
+
+function driverUnavailable(a: { tripId: number; driverId: number; reason: string }) {
+  const trip = getTrip(a.tripId);
+  const d = getDriver(a.driverId);
+  if (trip.driver_id !== d.id) fail("This trip isn't assigned to you.");
+  if (!["CONFIRMED", "DRIVER_EN_ROUTE"].includes(trip.status)) fail("This trip can no longer be released.");
+  run(
+    "UPDATE trips SET driver_id = NULL, status = 'REPLACEMENT_SEARCHING', unavailable_ids = unavailable_ids || ? WHERE id = ?",
+    `${d.id},`,
+    trip.id,
+  );
+  const p = passengerOf(trip);
+  log([`passenger:${p.id}`], "warning", "Your driver is unavailable. We're checking eligible replacements",
+    `${tripLabel(trip)}. You don't need to do anything.`, { tripId: trip.id });
+  log(["operator"], "warning", `${d.name} can't do trip #${trip.id}: ${a.reason}`,
+    `Auto-searching backups${trip.category === "WOMEN_ONLY" ? " (Women-Only rules apply)" : ""}…`, { tripId: trip.id });
+  log([`driver:${d.id}`], "info", "You've been released from this trip", `${tripLabel(trip)} · Reason: ${a.reason}`, {
+    tripId: trip.id,
+  });
+  // Short pause so everyone can see the "searching" state during the demo.
+  later(() => runReplacement(trip.id), 2500);
+}
+
+function passengerRecovery(a: { tripId: number; passengerId: number; choice: "wait" | "cancel" | "switch_standard" }) {
+  const trip = getTrip(a.tripId);
+  const p = passengerOf(trip);
+  if (p.id !== a.passengerId) fail("Not your trip.");
+  if (trip.status !== "NO_ELIGIBLE_DRIVER") fail("This trip doesn't need a decision.");
+
+  if (a.choice === "wait") {
+    log([`passenger:${p.id}`], "info", "Okay, we'll keep looking", "You'll be notified as soon as an eligible driver is confirmed.", {
+      tripId: trip.id,
+    });
+  } else if (a.choice === "cancel") {
+    run("UPDATE trips SET status = 'CANCELLED_REFUNDED' WHERE id = ?", trip.id);
+    run("UPDATE passengers SET credit = credit + ? WHERE id = ?", trip.fare, p.id);
+    log([`passenger:${p.id}`], "info", `Trip cancelled. ${rupees(trip.fare)} added to your Raahi credit`, tripLabel(trip), {
+      tripId: trip.id,
+    });
+    log(["operator"], "info", `Trip #${trip.id} cancelled by passenger after no eligible driver`, "Service-failure refund issued.", {
+      tripId: trip.id,
+    });
+  } else {
+    if (trip.category !== "WOMEN_ONLY") fail("This trip is already Standard.");
+    run("UPDATE trips SET category = 'STANDARD', status = 'REPLACEMENT_SEARCHING' WHERE id = ?", trip.id);
+    log(["operator"], "warning", `${p.name} explicitly switched trip #${trip.id} to Standard`,
+      "Category change made by the passenger (audit record).", { tripId: trip.id });
+    log([`passenger:${p.id}`], "info", "You switched this one trip to Standard", "Your plan stays Women-Only for all other trips.", {
+      tripId: trip.id,
+    });
+    later(() => runReplacement(trip.id), 1500);
+  }
+}
+
+const NEXT_STATUS: Partial<Record<TripStatus, TripStatus>> = {
+  CONFIRMED: "DRIVER_EN_ROUTE",
+  DRIVER_EN_ROUTE: "ARRIVED",
+  ARRIVED: "IN_PROGRESS",
+  IN_PROGRESS: "COMPLETED",
+};
+
+function tripProgress(a: { tripId: number; driverId: number }) {
+  const trip = getTrip(a.tripId);
+  if (trip.driver_id !== a.driverId) fail("This trip isn't assigned to you.");
+  const next = NEXT_STATUS[trip.status] ?? fail("No next step for this trip.");
+  run("UPDATE trips SET status = ? WHERE id = ?", next, trip.id);
+  const d = getDriver(a.driverId);
+  const p = passengerOf(trip);
+  const who = firstName(d.name);
+  const msg: Record<string, [EventKind, string, string]> = {
+    DRIVER_EN_ROUTE: ["info", `${who} is on the way`, `${d.vehicle} · ${d.plate}`],
+    ARRIVED: ["info", `${who} has arrived at pickup`, `${placeName(trip.from_place)}. Free waiting: 5 minutes.`],
+    IN_PROGRESS: ["info", "Trip started", `Heading to ${placeName(trip.to_place)}. Safety help is one tap away.`],
+    COMPLETED: ["success", "Trip completed", `${rupees(trip.fare)} covered by your plan. Rate ${who}?`],
+  };
+  const [kind, title, detail] = msg[next];
+  log([`passenger:${p.id}`], kind, title, detail, { tripId: trip.id });
+  log(["operator"], "info", `Trip #${trip.id}: ${next.replaceAll("_", " ").toLowerCase()}`, `${d.name} · ${p.name}`, {
+    tripId: trip.id,
+  });
+}
+
+function rateDriver(a: { tripId: number; passengerId: number; stars: number }) {
+  const trip = getTrip(a.tripId);
+  if (passengerOf(trip).id !== a.passengerId) fail("You can only rate your own trips.");
+  if (trip.status !== "COMPLETED") fail("You can rate only after the trip is completed.");
+  if (trip.rated) fail("You've already rated this trip.");
+  const stars = Math.max(1, Math.min(5, Math.round(a.stars)));
+  if (!trip.driver_id) fail("No driver on this trip.");
+  run("UPDATE trips SET rated = 1 WHERE id = ?", trip.id);
+  run("UPDATE drivers SET rating_sum = rating_sum + ?, rating_count = rating_count + 1 WHERE id = ?", stars, trip.driver_id);
+  log([`driver:${trip.driver_id}`], "success", `You got a ${stars}★ rating`, tripLabel(trip), { tripId: trip.id });
+  log([`passenger:${a.passengerId}`], "info", "Thanks for rating", "Ratings are private and separate from safety reports.", {
+    tripId: trip.id,
+  });
+}
+
+function safetyReport(a: { tripId: number; passengerId: number }) {
+  const trip = getTrip(a.tripId);
+  const p = passengerOf(trip);
+  if (p.id !== a.passengerId) fail("Not your trip.");
+  const d = trip.driver_id ? getDriver(trip.driver_id) : null;
+  log(["operator"], "danger", `PRIVATE safety report: trip #${trip.id}`,
+    `Reported by ${p.name}${d ? ` · driver ${d.name} (${d.plate})` : ""}. Call passenger now.`, { tripId: trip.id });
+  log([`passenger:${p.id}`], "warning", "Safety team notified",
+    "Our team will call you right away. In an emergency, dial 112. This report is private and not shared with the driver.",
+    { tripId: trip.id });
+}
+
+function toggleDuty(a: { driverId: number }) {
+  const d = getDriver(a.driverId);
+  run("UPDATE drivers SET on_duty = ? WHERE id = ?", d.on_duty ? 0 : 1, d.id);
+  log(["operator", `driver:${d.id}`], "info", `${d.name} is now ${d.on_duty ? "off duty" : "on duty"}`);
+  if (!d.on_duty) {
+    // A driver just came on duty: retry trips that are still waiting for someone.
+    const waiting = many<Trip>(
+      "SELECT * FROM trips WHERE status IN ('NO_ELIGIBLE_DRIVER', 'ASSIGNMENT_PENDING') AND date >= ? ORDER BY date, time",
+      localDate(new Date()),
+    );
+    for (const t of waiting) runReplacement(t.id);
+  }
+}
+
+// ---------- seed ----------
+
+function seed() {
+  const d = db();
+  d.exec(`
+    INSERT INTO passengers (id, name, gender, women_verified) VALUES
+      (1, 'Priya Sharma', 'F', 1),
+      (2, 'Rahul Verma', 'M', 0);
+    INSERT INTO drivers (id, name, gender, women_only_eligible, vehicle, plate, seats, rating_sum, rating_count) VALUES
+      (1, 'Sunita Devi', 'F', 1, 'Auto', 'MH-12-RT-4521', 3, 48, 10),
+      (2, 'Meena Kumari', 'F', 1, 'Auto', 'MH-12-KP-1187', 3, 47, 10),
+      (3, 'Vikram Patil', 'M', 0, 'Cab · Dzire', 'MH-12-QW-9032', 4, 45, 10),
+      (4, 'Arjun Singh', 'M', 0, 'Auto', 'MH-14-GH-2210', 3, 44, 10);
+  `);
+  // Rahul already has an active Standard plan with Vikram, so the dispatch board isn't empty.
+  createPlan({
+    passengerId: 2, pickup: "baner", dropoff: "hinjewadi", days: [1, 2, 3, 4, 5, 6],
+    pickupTime: "08:30", returnTime: "18:30", category: "STANDARD", duration: "MONTHLY",
+  });
+  operatorDecision({ planId: 1, decision: "approve", primaryDriverId: 3 });
+  payPlan({ planId: 1, passengerId: 2 });
+  d.exec("DELETE FROM events");
+  log(["operator"], "info", "Demo data loaded", "4 drivers, 2 passengers, 1 active plan.");
+}
+
+// ---------- public API ----------
+
+export function getState(): State {
+  conn();
+  return {
+    today: localDate(new Date()),
+    passengers: many<Passenger>("SELECT * FROM passengers ORDER BY id"),
+    drivers: many<Driver>("SELECT * FROM drivers ORDER BY id"),
+    plans: many<Plan>("SELECT * FROM plans ORDER BY id DESC"),
+    trips: many<Trip>("SELECT * FROM trips ORDER BY date, time, id"),
+    events: many("SELECT * FROM events ORDER BY id DESC LIMIT 200"),
+  };
+}
+
+const ACTIONS = {
+  createPlan,
+  operatorDecision,
+  payPlan,
+  driverUnavailable,
+  passengerRecovery,
+  tripProgress,
+  rateDriver,
+  safetyReport,
+  toggleDuty,
+  reset: () => {
+    dropAll();
+    g.__raahiSeeded = false;
+    conn();
+  },
+} as const;
+
+export type ActionType = keyof typeof ACTIONS;
+
+export function act(type: string, payload: Record<string, unknown>): { ok: true } | { ok: false; error: string } {
+  const fn = ACTIONS[type as ActionType] as ((p: never) => void) | undefined;
+  if (!fn) return { ok: false, error: `Unknown action: ${type}` };
+  try {
+    fn(payload as never);
+    return { ok: true };
+  } catch (e) {
+    if (e instanceof UserError) return { ok: false, error: e.message };
+    console.error(e);
+    return { ok: false, error: "Something went wrong. Check the server log." };
+  }
+}
