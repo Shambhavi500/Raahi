@@ -20,18 +20,97 @@ body {
   display: none;
 }
 
-/* 16px inputs on phones stop iOS Safari from zooming in when a field is tapped */
-@media (max-width: 639px) {
-  input,
-  select {
-    font-size: 16px !important;
-  }
-}
-
 .stripes {
   background-image: repeating-linear-gradient(
     135deg,
     rgba(255, 255, 255, 0.04) 0 10px,
     transparent 10px 20px
   );
+}
+
+/* ---------- map ---------- */
+.leaflet-container {
+  font-family: inherit;
+  background: #e8e6e0;
+}
+.raahi-tiles {
+  filter: grayscale(0.85) brightness(1.04) contrast(0.92);
+}
+.leaflet-control-zoom a {
+  border-radius: 12px !important;
+}
+.leaflet-touch .leaflet-bar {
+  border: none;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.15);
+  border-radius: 14px;
+  overflow: hidden;
+}
+.raahi-pin {
+  background: none;
+  border: none;
+}
+.raahi-pin-pickup {
+  width: 22px;
+  height: 22px;
+  border-radius: 9999px;
+  background: var(--color-brand);
+  border: 5px solid var(--color-ink);
+  box-shadow: 0 0 0 6px rgba(212, 246, 57, 0.35), 0 4px 10px rgba(0, 0, 0, 0.3);
+}
+.raahi-pin-drop {
+  width: 20px;
+  height: 20px;
+  margin: 1px;
+  border-radius: 4px;
+  background: var(--color-ink);
+  border: 5px solid #fff;
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.35);
+}
+.raahi-pin-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 9999px;
+  background: var(--color-ink);
+  border: 2px solid #fff;
+}
+.raahi-pin-driver {
+  width: 34px;
+  height: 34px;
+  border-radius: 9999px;
+  display: grid;
+  place-items: center;
+  background: var(--color-brand);
+  border: 3px solid var(--color-ink);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.35);
+}
+
+/* ---------- motion ---------- */
+@keyframes raahi-rise {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.animate-rise {
+  animation: raahi-rise 0.35s ease-out both;
+}
+@keyframes raahi-pop {
+  0% {
+    transform: scale(0.6);
+    opacity: 0;
+  }
+  70% {
+    transform: scale(1.08);
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+.animate-pop {
+  animation: raahi-pop 0.45s ease-out both;
 }

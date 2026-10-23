@@ -6,16 +6,22 @@ import path from "node:path";
 const DATA_DIR = path.join(process.cwd(), "data");
 const DB_PATH = path.join(DATA_DIR, "raahi.db");
 
+// Bump when the schema changes; an older demo database is rebuilt from scratch.
+const SCHEMA_VERSION = 2;
+
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS passengers (
   id INTEGER PRIMARY KEY,
+  phone TEXT NOT NULL UNIQUE,
   name TEXT NOT NULL,
+  age INTEGER NOT NULL,
   gender TEXT NOT NULL,
   women_verified INTEGER NOT NULL DEFAULT 0,
   credit INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS drivers (
   id INTEGER PRIMARY KEY,
+  phone TEXT NOT NULL UNIQUE,
   name TEXT NOT NULL,
   gender TEXT NOT NULL,
   women_only_eligible INTEGER NOT NULL DEFAULT 0,
@@ -29,8 +35,12 @@ CREATE TABLE IF NOT EXISTS drivers (
 CREATE TABLE IF NOT EXISTS plans (
   id INTEGER PRIMARY KEY,
   passenger_id INTEGER NOT NULL REFERENCES passengers(id),
-  pickup TEXT NOT NULL,
-  dropoff TEXT NOT NULL,
+  pickup_label TEXT NOT NULL,
+  pickup_lat REAL NOT NULL,
+  pickup_lng REAL NOT NULL,
+  dropoff_label TEXT NOT NULL,
+  dropoff_lat REAL NOT NULL,
+  dropoff_lng REAL NOT NULL,
   days TEXT NOT NULL,
   pickup_time TEXT NOT NULL,
   return_time TEXT,
@@ -47,11 +57,16 @@ CREATE TABLE IF NOT EXISTS trips (
   date TEXT NOT NULL,
   time TEXT NOT NULL,
   direction TEXT NOT NULL,
-  from_place TEXT NOT NULL,
-  to_place TEXT NOT NULL,
+  from_label TEXT NOT NULL,
+  from_lat REAL NOT NULL,
+  from_lng REAL NOT NULL,
+  to_label TEXT NOT NULL,
+  to_lat REAL NOT NULL,
+  to_lng REAL NOT NULL,
   category TEXT NOT NULL,
   fare INTEGER NOT NULL,
   status TEXT NOT NULL,
+  status_at TEXT NOT NULL,
   driver_id INTEGER REFERENCES drivers(id),
   unavailable_ids TEXT NOT NULL DEFAULT ',',
   rated INTEGER NOT NULL DEFAULT 0,
@@ -76,15 +91,19 @@ export function db(): DatabaseSync {
     fs.mkdirSync(DATA_DIR, { recursive: true });
     const d = new DatabaseSync(DB_PATH);
     d.exec("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;");
-    d.exec(SCHEMA);
     g.__raahiDb = d;
+    const { user_version } = d.prepare("PRAGMA user_version").get() as { user_version: number };
+    if (user_version !== SCHEMA_VERSION) dropAll();
+    d.exec(SCHEMA);
   }
   return g.__raahiDb;
 }
 
 export function dropAll() {
-  db().exec(
+  const d = db();
+  d.exec(
     "DROP TABLE IF EXISTS events; DROP TABLE IF EXISTS trips; DROP TABLE IF EXISTS plans; DROP TABLE IF EXISTS drivers; DROP TABLE IF EXISTS passengers;",
   );
-  db().exec(SCHEMA);
+  d.exec(SCHEMA);
+  d.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
 }

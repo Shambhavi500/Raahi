@@ -1,8 +1,8 @@
 # Raahi
 
-Your daily commute, handled. Subscribe to a recurring ride once; if your driver can't make it, an eligible backup is assigned automatically, and a Women-Only booking is never silently switched to Standard.
+Your daily commute, handled. Subscribe to a recurring college or office ride once; a verified fleet confirms every trip, and if your driver can't make it, an eligible backup is assigned automatically. A Women-Only booking is never silently switched to Standard.
 
-Everything runs locally: Next.js + a SQLite file (`data/raahi.db`, built into Node 24). No accounts, API keys or internet needed.
+Runs on your PC: Next.js plus a local SQLite file (`data/raahi.db`, built into Node 24). No accounts or API keys. The map uses free OpenStreetMap tiles, so it needs an internet connection to draw streets; everything else works offline.
 
 ## Run
 
@@ -11,24 +11,37 @@ npm install
 npm run dev
 ```
 
-Open http://localhost:3000. On a wide screen you'll see the Passenger, Operator and Driver apps side by side; on a phone, switch between them with the tabs.
+Open http://localhost:3000.
+
+| Page | Who it's for |
+| --- | --- |
+| `/` | Start page: choose Ride or Drive |
+| `/passenger` | Passenger app (phone-first, Uber-style) |
+| `/driver` | Driver app |
+| `/operator` | Fleet operator console |
+| `/demo` | All three apps side by side, for judges |
+
+Login is by phone number and a 4-digit code. In demo mode the code is shown on screen ("Demo SMS") instead of being texted.
 
 ## Demo script
 
-1. **Passenger (Priya):** New plan → Women-Only → Request plan.
-2. **Operator:** male drivers are greyed out as "not Women-Only eligible". Pick Sunita → Accept plan.
-3. **Passenger:** Pay (demo). Trips for the next 7 days appear, all confirmed with Sunita.
-4. **Driver (Sunita):** today's trip → Can't make it → Feeling sick.
-5. Watch: "Finding replacement" → Meena is auto-assigned. The operator log shows who was skipped and why.
-6. Optional: switch the driver picker to Meena and report a breakdown too. No eligible Women-Only driver is left, so Priya chooses: keep waiting, cancel with a refund, or switch that one trip to Standard herself.
-7. Driver: Head to pickup → I've arrived → Start trip → Complete trip. Priya rates the driver.
-
-**Reset demo** (top right) wipes the database back to the starting data.
+1. Open `/demo` (or the three pages in separate tabs). Tap **Reset demo** first.
+2. **Passenger:** Get started → any new 10-digit number (e.g. 91234 56780) → **Fill** the code → name **Priya** → age **21** → **Woman** → **Verify now (demo)**.
+3. **Passenger:** *Where do you go every day?* → pickup **Kothrud** → drop **Fergusson College** (or set either on the map) → Weekdays, 8:30 AM, ride back 5:30 PM → **Raahi Women-Only** → Review → **Request plan**.
+4. **Operator:** log in with **Saarthi Fleets** → Requests: male drivers are greyed out as "not Women-Only eligible" → pick **Sunita** → **Accept plan**.
+5. **Passenger:** screen updates to "You're confirmed!" → **Pay (demo)** → "You're all set".
+6. **Driver:** log in as **Sunita Devi** → next ride → **Start: head to pickup**. The passenger sees Sunita's car moving on the map.
+7. **Driver:** **I can't make this ride** → *Feeling sick*. Passenger sees "Finding a verified backup…", then Meena is assigned. The operator's Activity log lists who was skipped and why.
+8. Optional: log in as Meena and drop out too. No eligible Women-Only driver is left, so Priya chooses: keep waiting, cancel with a refund, or switch that one ride to Standard herself.
+9. Driver: arrived → start ride → complete. Passenger rates the driver.
 
 ## Code map
 
-- `lib/raahi.ts`: all business rules (plan approval, trip generation, backup dispatch, Women-Only rule, ratings, safety reports)
+- `lib/raahi.ts`: business rules (OTP login, sign-up checks, plan approval, trip generation, backup dispatch, Women-Only rule, ratings, safety reports)
 - `lib/db.ts`: SQLite schema
-- `lib/shared.ts`: types, places, pricing
-- `components/`: Passenger, Operator and Driver panels
-- `app/api/state`, `app/api/action`: the two API routes the UI polls and calls
+- `lib/shared.ts`: types, Pune places, distance and pricing
+- `lib/client.ts`: polling hook and per-role login sessions
+- `components/passenger/`: onboarding, booking steps, rides and live trip screens
+- `components/driver/`, `components/operator/`: the other two apps
+- `components/map/RaahiMap.tsx`: Leaflet map (route, pickup/drop pins, moving driver)
+- `app/api/state`, `app/api/action`: the two API routes every app uses
