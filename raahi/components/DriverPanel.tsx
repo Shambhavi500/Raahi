@@ -65,7 +65,7 @@ export function DriverPanel({ state, act }: PanelProps) {
       {trips.length === 0 ? (
         <Empty>No trips assigned. Your schedule shows up here once the operator assigns you.</Empty>
       ) : (
-        <div className="space-y-2">
+        <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-1">
           {trips.map((t) => (
             <DriverTrip key={t.id} trip={t} driverId={me.id} state={state} act={act} />
           ))}
@@ -87,26 +87,30 @@ function DriverTrip({ trip, driverId, state, act }: { trip: Trip; driverId: numb
 
   return (
     <Card>
-      <div className="flex items-center justify-between gap-2">
-        <p className="text-sm font-bold">
-          {fmtDate(trip.date, state.today)} · {fmtTime(trip.time)}
-        </p>
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-[11px] font-bold tracking-wider text-black/45 uppercase">{fmtDate(trip.date, state.today)}</p>
+          <p className="text-lg leading-tight font-extrabold">{fmtTime(trip.time)}</p>
+        </div>
         <TripStatusChip status={trip.status} />
       </div>
       {/* Drivers see only what they need: first name and pickup point. */}
       <p className="mt-1 text-xs">
         Passenger: <b>{passenger?.name.split(" ")[0]}</b>
       </p>
-      <p className="flex items-center gap-1 text-xs text-black/60">
-        <MapPin size={12} /> {placeName(trip.from_place)} → {placeName(trip.to_place)}
+      <p className="flex items-start gap-1 text-xs text-black/60">
+        <MapPin size={12} className="mt-0.5 shrink-0" />
+        <span className="min-w-0">
+          {placeName(trip.from_place)} → {placeName(trip.to_place)}
+        </span>
       </p>
       <div className="mt-2">
         <CategoryChip category={trip.category} />
       </div>
 
       {next && !reporting && (
-        <div className="mt-3 flex flex-wrap gap-2">
-          <Button variant="lime" className="flex-1 whitespace-nowrap" onClick={() => act("tripProgress", { tripId: trip.id, driverId })}>
+        <div className="mt-3 grid gap-2 sm:grid-cols-[1fr_auto]">
+          <Button variant="lime" className="whitespace-nowrap" onClick={() => act("tripProgress", { tripId: trip.id, driverId })}>
             <Navigation size={15} /> {next}
           </Button>
           {canRelease && (
@@ -120,7 +124,7 @@ function DriverTrip({ trip, driverId, state, act }: { trip: Trip; driverId: numb
       {reporting && (
         <div className="mt-3 rounded-2xl bg-amber-50 p-3">
           <p className="text-xs font-semibold">Why can’t you do this trip? Dispatch will auto-assign a backup.</p>
-          <div className="mt-2 flex flex-wrap gap-2">
+          <div className="mt-2 grid gap-2 sm:flex sm:flex-wrap">
             {REASONS.map((r) => (
               <Button
                 key={r}

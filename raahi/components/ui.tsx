@@ -75,7 +75,7 @@ export function CategoryChip({ category }: { category: Category }) {
 }
 
 export function Card({ children, className = "" }: { children: ReactNode; className?: string }) {
-  return <div className={`rounded-3xl border border-black/10 bg-white p-4 ${className}`}>{children}</div>;
+  return <div className={`min-w-0 rounded-3xl border border-black/10 bg-white p-4 ${className}`}>{children}</div>;
 }
 
 export function SectionTitle({ children, right }: { children: ReactNode; right?: ReactNode }) {
@@ -110,7 +110,7 @@ export function Button({
     <button
       onClick={onClick}
       disabled={disabled}
-      className={`inline-flex items-center justify-center gap-1.5 rounded-full px-4 py-2 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-40 ${styles} ${className}`}
+      className={`inline-flex min-h-10 items-center justify-center gap-1.5 rounded-full px-4 py-2 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-40 ${styles} ${className}`}
     >
       {children}
     </button>
@@ -201,17 +201,17 @@ export function PanelShell({
   children: ReactNode;
 }) {
   return (
-    <section className="overflow-hidden rounded-[32px] border border-black/10 bg-canvas shadow-sm">
-      <div className="stripes flex items-center justify-between gap-2 bg-ink px-5 py-4 text-white">
-        <div className="flex items-center gap-2">
-          <span className="grid size-8 place-items-center rounded-xl bg-brand text-ink">
+    <section className="min-w-0 overflow-hidden rounded-[28px] border border-black/10 bg-canvas shadow-sm sm:rounded-[32px]">
+      <div className="stripes flex items-center justify-between gap-3 bg-ink px-4 py-3.5 text-white sm:px-5 sm:py-4">
+        <div className="flex min-w-0 items-center gap-2">
+          <span className="grid size-8 shrink-0 place-items-center rounded-xl bg-brand text-ink">
             <Icon size={17} />
           </span>
-          <h2 className="font-bold">{title}</h2>
+          <h2 className="truncate font-bold">{title}</h2>
         </div>
-        {picker}
+        <div className="min-w-0 shrink-0">{picker}</div>
       </div>
-      <div className="p-4">{children}</div>
+      <div className="p-3.5 sm:p-5 xl:p-4">{children}</div>
     </section>
   );
 }
@@ -229,7 +229,7 @@ export function Picker<T extends number>({
     <select
       value={value}
       onChange={(e) => onChange(Number(e.target.value) as T)}
-      className="rounded-full bg-white/10 px-3 py-1.5 text-sm font-semibold text-white outline-none [&>option]:text-ink"
+      className="max-w-[10.5rem] rounded-full bg-white/10 px-3 py-1.5 text-sm font-semibold text-white outline-none [&>option]:text-ink"
     >
       {options.map((o) => (
         <option key={o.id} value={o.id}>

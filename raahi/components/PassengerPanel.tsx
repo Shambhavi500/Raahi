@@ -80,21 +80,22 @@ export function PassengerPanel({ state, act }: PanelProps) {
           {plans.length === 0 ? (
             <Empty>No plans yet. Set up your daily commute once and Raahi handles the rest.</Empty>
           ) : (
-            <div className="space-y-2">
+            <div className="grid gap-2">
               {plans.map((plan) => (
                 <Card key={plan.id}>
                   <div className="flex flex-wrap items-center gap-2">
                     <PlanStatusChip status={plan.status} />
                     <CategoryChip category={plan.category} />
                   </div>
-                  <p className="mt-2 flex items-center gap-1.5 text-sm font-semibold">
-                    {placeName(plan.pickup)} <ArrowRight size={14} /> {placeName(plan.dropoff)}
+                  <p className="mt-2 text-sm font-semibold">
+                    {placeName(plan.pickup)} <ArrowRight size={14} className="mx-0.5 inline align-[-2px]" />{" "}
+                    {placeName(plan.dropoff)}
                   </p>
                   <p className="text-xs text-black/60">
                     {plan.days.split(",").map((d) => DAY_LABELS[Number(d)]).join(" · ")} · {fmtTime(plan.pickup_time)}
                     {plan.return_time ? ` · return ${fmtTime(plan.return_time)}` : ""}
                   </p>
-                  <div className="mt-2 flex items-center justify-between">
+                  <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
                     <p className="text-sm">
                       <b>{rupees(plan.monthly_price)}</b>
                       <span className="text-black/50">/month · {DURATIONS[plan.duration].label}</span>
@@ -114,7 +115,7 @@ export function PassengerPanel({ state, act }: PanelProps) {
           {trips.length === 0 ? (
             <Empty>Trips appear here once a plan is active.</Empty>
           ) : (
-            <div className="space-y-2">
+            <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-1">
               {trips.map((t) => (
                 <PassengerTrip key={t.id} trip={t} me={me} state={state} act={act} />
               ))}
@@ -136,15 +137,20 @@ function PassengerTrip({ trip, me, state, act }: { trip: Trip; me: Passenger } &
 
   return (
     <Card className={trip.status === "NO_ELIGIBLE_DRIVER" ? "!border-red-300" : ""}>
-      <div className="flex items-center justify-between gap-2">
-        <p className="text-sm font-bold">
-          {fmtDate(trip.date, state.today)} · {fmtTime(trip.time)}
-          <span className="ml-1 font-normal text-black/50">{trip.direction === "RETURN" ? "Return" : "Outbound"}</span>
-        </p>
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-[11px] font-bold tracking-wider text-black/45 uppercase">
+            {fmtDate(trip.date, state.today)} · {trip.direction === "RETURN" ? "Return" : "Outbound"}
+          </p>
+          <p className="text-lg leading-tight font-extrabold">{fmtTime(trip.time)}</p>
+        </div>
         <TripStatusChip status={trip.status} />
       </div>
-      <p className="mt-1 flex items-center gap-1 text-xs text-black/60">
-        <MapPin size={12} /> {placeName(trip.from_place)} → {placeName(trip.to_place)}
+      <p className="mt-1.5 flex items-start gap-1 text-xs text-black/60">
+        <MapPin size={12} className="mt-0.5 shrink-0" />
+        <span className="min-w-0">
+          {placeName(trip.from_place)} → {placeName(trip.to_place)}
+        </span>
       </p>
       <div className="mt-2 flex flex-wrap items-center gap-2">
         <CategoryChip category={trip.category} />
@@ -164,7 +170,7 @@ function PassengerTrip({ trip, me, state, act }: { trip: Trip; me: Passenger } &
               ? "No eligible Women-Only driver yet. Your booking will not be switched to Standard unless you choose it."
               : "No eligible driver yet. Choose what you'd like to do."}
           </p>
-          <div className="mt-2 flex flex-wrap gap-2">
+          <div className="mt-2 grid gap-2 sm:flex sm:flex-wrap">
             <Button variant="ghost" className="!py-1.5 text-xs" onClick={() => act("passengerRecovery", { ...ids, choice: "wait" })}>
               Keep waiting
             </Button>
@@ -191,11 +197,11 @@ function PassengerTrip({ trip, me, state, act }: { trip: Trip; me: Passenger } &
       )}
 
       {trip.status === "COMPLETED" && !trip.rated && driver && (
-        <div className="mt-3 flex items-center gap-2">
-          <span className="text-xs text-black/60">Rate {driver.name.split(" ")[0]}:</span>
+        <div className="mt-3 flex flex-wrap items-center gap-1">
+          <span className="mr-1 text-xs text-black/60">Rate {driver.name.split(" ")[0]}:</span>
           {[1, 2, 3, 4, 5].map((n) => (
-            <button key={n} onClick={() => act("rateDriver", { ...ids, stars: n })} aria-label={`${n} stars`}>
-              <Star size={20} className="text-amber-400 hover:fill-amber-400" />
+            <button key={n} className="p-1" onClick={() => act("rateDriver", { ...ids, stars: n })} aria-label={`${n} stars`}>
+              <Star size={24} className="text-amber-400 hover:fill-amber-400" />
             </button>
           ))}
         </div>
@@ -235,7 +241,7 @@ function PlanForm({ me, act, onDone }: { me: Passenger; act: Act; onDone: () => 
     if (ok) onDone();
   };
 
-  const select = "w-full rounded-xl border border-black/10 bg-white px-3 py-2 text-sm";
+  const select = "mt-1 w-full min-w-0 rounded-xl border border-black/10 bg-white px-3 py-2 text-sm text-ink";
 
   return (
     <Card className="mt-4">
@@ -246,7 +252,7 @@ function PlanForm({ me, act, onDone }: { me: Passenger; act: Act; onDone: () => 
         </button>
       </div>
 
-      <div className="grid grid-cols-2 gap-2">
+      <div className="grid gap-2 sm:grid-cols-2">
         <label className="text-xs font-semibold text-black/60">
           Pickup
           <select className={select} value={pickup} onChange={(e) => setPickup(e.target.value)}>
@@ -267,14 +273,14 @@ function PlanForm({ me, act, onDone }: { me: Passenger; act: Act; onDone: () => 
           <button
             key={label}
             onClick={() => toggleDay(d)}
-            className={`rounded-full px-3 py-1.5 text-xs font-semibold ${days.includes(d) ? "bg-ink text-white" : "bg-black/5"}`}
+            className={`min-w-11 rounded-full px-3 py-2 text-xs font-semibold ${days.includes(d) ? "bg-ink text-white" : "bg-black/5"}`}
           >
             {label}
           </button>
         ))}
       </div>
 
-      <div className="mt-3 grid grid-cols-2 gap-2">
+      <div className="mt-3 grid gap-2 min-[400px]:grid-cols-2">
         <label className="text-xs font-semibold text-black/60">
           Pickup time
           <input type="time" className={select} value={pickupTime} onChange={(e) => setPickupTime(e.target.value)} />
@@ -300,7 +306,7 @@ function PlanForm({ me, act, onDone }: { me: Passenger; act: Act; onDone: () => 
                 category === c ? "border-ink bg-ink text-white" : "border-black/10 bg-white"
               }`}
             >
-              <span className="flex items-center gap-1 font-bold">
+              <span className="flex items-center gap-1 font-bold whitespace-nowrap">
                 {c === "WOMEN_ONLY" && <ShieldCheck size={14} />} {c === "WOMEN_ONLY" ? "Women-Only" : "Standard"}
               </span>
               <span className="opacity-70">
@@ -317,7 +323,7 @@ function PlanForm({ me, act, onDone }: { me: Passenger; act: Act; onDone: () => 
           <button
             key={d}
             onClick={() => setDuration(d)}
-            className={`rounded-full px-3 py-1.5 text-xs font-semibold ${duration === d ? "bg-ink text-white" : "bg-black/5"}`}
+            className={`rounded-full px-3 py-2 text-xs font-semibold ${duration === d ? "bg-ink text-white" : "bg-black/5"}`}
           >
             {DURATIONS[d].label}
           </button>
@@ -325,7 +331,7 @@ function PlanForm({ me, act, onDone }: { me: Passenger; act: Act; onDone: () => 
       </div>
 
       <div className="stripes mt-4 rounded-2xl bg-ink p-4 text-white">
-        <div className="flex items-end justify-between">
+        <div className="flex flex-wrap items-end justify-between gap-2">
           <div>
             <p className="text-xs text-white/60">Your plan</p>
             <p className="text-2xl font-extrabold text-brand">
@@ -333,7 +339,7 @@ function PlanForm({ me, act, onDone }: { me: Passenger; act: Act; onDone: () => 
               <span className="text-sm font-semibold text-white/60">/month</span>
             </p>
           </div>
-          <p className="text-right text-xs text-white/60">
+          <p className="text-xs text-white/60 sm:text-right">
             {q.km} km · ~{q.tripsPerMonth} trips/month
             <br />
             {rupees(q.perTrip)} per ride if booked daily

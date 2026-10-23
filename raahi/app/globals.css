@@ -13,6 +13,21 @@ body {
   color: var(--color-ink);
 }
 
+.no-scrollbar {
+  scrollbar-width: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+/* 16px inputs on phones stop iOS Safari from zooming in when a field is tapped */
+@media (max-width: 639px) {
+  input,
+  select {
+    font-size: 16px !important;
+  }
+}
+
 .stripes {
   background-image: repeating-linear-gradient(
     135deg,

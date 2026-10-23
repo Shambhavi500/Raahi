@@ -36,7 +36,7 @@ export function OperatorPanel({ state, act }: PanelProps) {
     <PanelShell
       title="Operator dispatch"
       icon={Building2}
-      picker={<span className="text-sm font-semibold text-white/70">Saarthi Fleets, Pune</span>}
+      picker={<span className="block truncate text-xs font-semibold text-white/70 sm:text-sm">Saarthi Fleets · Pune</span>}
     >
       <div className="grid grid-cols-3 gap-2">
         <Stat label="Active plans" value={state.plans.filter((p) => p.status === "ACTIVE").length} />
@@ -48,7 +48,7 @@ export function OperatorPanel({ state, act }: PanelProps) {
       {pending.length === 0 ? (
         <Empty>No pending requests.</Empty>
       ) : (
-        <div className="space-y-2">
+        <div className="grid gap-2">
           {pending.map((plan) => (
             <PlanRequest key={plan.id} plan={plan} state={state} act={act} />
           ))}
@@ -65,17 +65,22 @@ export function OperatorPanel({ state, act }: PanelProps) {
             return (
               <div
                 key={t.id}
-                className={`flex items-center justify-between gap-2 border-b border-black/5 px-3 py-2 last:border-0 ${
+                className={`flex items-start justify-between gap-3 border-b border-black/5 px-3 py-2.5 last:border-0 ${
                   ATTENTION.includes(t.status) ? "bg-amber-50" : ""
                 }`}
               >
                 <div className="min-w-0">
+                  <p className="text-[11px] font-bold tracking-wider text-black/45 uppercase">
+                    {fmtDate(t.date, state.today)} · #{t.id}
+                  </p>
                   <p className="truncate text-sm font-semibold">
-                    #{t.id} · {fmtDate(t.date, state.today)} {fmtTime(t.time)} · {passengerName(t.plan_id)}
+                    {fmtTime(t.time)} · {passengerName(t.plan_id)}
                   </p>
                   <p className="truncate text-xs text-black/50">
-                    {driver ? `${driver.name} · ${driver.plate}` : "Unassigned"} · {placeName(t.from_place)} →{" "}
-                    {placeName(t.to_place)}
+                    {driver ? `${driver.name} · ${driver.plate}` : "Unassigned"}
+                    <span className="hidden sm:inline">
+                      {" "}· {placeName(t.from_place)} → {placeName(t.to_place)}
+                    </span>
                   </p>
                 </div>
                 <div className="flex shrink-0 flex-col items-end gap-1">
@@ -89,7 +94,7 @@ export function OperatorPanel({ state, act }: PanelProps) {
       )}
 
       <SectionTitle>Fleet</SectionTitle>
-      <div className="space-y-2">
+      <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-1">
         {state.drivers.map((d) => (
           <Card key={d.id} className="!p-3">
             <div className="flex items-center justify-between gap-2">
@@ -124,11 +129,11 @@ export function OperatorPanel({ state, act }: PanelProps) {
 
 function Stat({ label, value, alert }: { label: string; value: number; alert?: boolean }) {
   return (
-    <div className={`rounded-2xl p-3 ${alert ? "bg-amber-100" : "bg-white"} border border-black/10`}>
+    <div className={`min-w-0 rounded-2xl p-3 ${alert ? "bg-amber-100" : "bg-white"} border border-black/10`}>
       <p className="flex items-center gap-1 text-2xl font-extrabold">
         {value} {alert && <AlertTriangle size={16} className="text-amber-600" />}
       </p>
-      <p className="text-[11px] font-semibold text-black/50">{label}</p>
+      <p className="text-[11px] leading-tight font-semibold text-black/50">{label}</p>
     </div>
   );
 }
@@ -164,7 +169,7 @@ function PlanRequest({ plan, state, act }: { plan: Plan } & PanelProps) {
           return (
             <label
               key={d.id}
-              className={`flex items-center gap-2 rounded-xl px-2 py-1.5 text-xs ${
+              className={`flex flex-wrap items-center gap-x-2 gap-y-0.5 rounded-xl px-2 py-2 text-xs ${
                 reason ? "text-black/35" : "cursor-pointer hover:bg-black/5"
               } ${driverId === d.id ? "bg-brand/40" : ""}`}
             >
@@ -182,10 +187,10 @@ function PlanRequest({ plan, state, act }: { plan: Plan } & PanelProps) {
         })}
       </div>
 
-      <div className="mt-3 flex gap-2">
+      <div className="mt-3 flex flex-wrap gap-2">
         <Button
           variant="lime"
-          className="flex-1"
+          className="flex-1 whitespace-nowrap"
           disabled={!driverId}
           onClick={() => act("operatorDecision", { planId: plan.id, decision: "approve", primaryDriverId: driverId })}
         >

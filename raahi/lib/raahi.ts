@@ -205,7 +205,7 @@ function createPlan(a: {
   const res = run(
     `INSERT INTO plans (passenger_id, pickup, dropoff, days, pickup_time, return_time, category, duration, monthly_price, status, created_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING_OPERATOR_CONFIRMATION', ?)`,
-    p.id, a.pickup, a.dropoff, [...a.days].sort().join(","), a.pickupTime, a.returnTime || null,
+    p.id, a.pickup, a.dropoff, [...new Set(a.days)].sort((x, y) => x - y).join(","), a.pickupTime, a.returnTime || null,
     a.category, a.duration, q.monthly, new Date().toISOString(),
   );
   const planId = Number(res.lastInsertRowid);
